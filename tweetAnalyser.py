@@ -84,12 +84,24 @@ def merge_user_tweets(dict1, dict2):
 
 def merge_list(list1, list2):
     merged_list = []
-    for i in list1:
-        merged_list.append(i)
-    for i in list2:
-        merged_list.append(i)
-    merged_list = heapq.nlargest(10, merged_list, key=lambda x: (x[1], x[2]))
+    merged_list.extend(list1)
+    merged_list.extend(list2)
+    return merged_list
 
+
+def merge_most_tweets_list(list1, list2):
+    TOTAL_INDEX = 2
+    merged_list = merge_list(list1, list2)
+    merged_list = heapq.nlargest(
+        N, merged_list, key=lambda x: (x[TOTAL_INDEX]))
+    return merged_list
+
+
+def merge_most_unique_list(list1, list2):
+    UNIQUE_INDEX = 1
+    merged_list = merge_list(list1, list2)
+    merged_list = heapq.nlargest(
+        N, merged_list, key=lambda x: (x[UNIQUE_INDEX], x[2]))
     return merged_list
 
 
@@ -107,6 +119,12 @@ def update_user_tweets(user_tweets, user_id, tweet_gcity):
     return user_tweets
 
 # @profile
+
+
+def update_dict(tweets_per_gcity, user_tweets, user_id, tweet_gcity):
+    tweets_per_gcity[tweet_gcity] = tweets_per_gcity.get(
+        tweet_gcity, 0) + 1
+    update_user_tweets(user_tweets, user_id, tweet_gcity)
 
 
 def analyseTweetLocation(twitter_data_file, great_locations, line_start, line_end):
@@ -138,7 +156,6 @@ def analyseTweetLocation(twitter_data_file, great_locations, line_start, line_en
                 continue
             else:
                 continue
-
             tweet_gcity = parse_location(tweet_gcity_str, great_locations)
             # what if the first line is about location
             if user_id is None:
@@ -147,19 +164,12 @@ def analyseTweetLocation(twitter_data_file, great_locations, line_start, line_en
             if tweet_gcity is None:
                 user_id = None
                 continue
-
-            tweets_per_gcity[tweet_gcity] = tweets_per_gcity.get(
-                tweet_gcity, 0) + 1
-            update_user_tweets(user_tweets, user_id, tweet_gcity)
-
+            update_dict(tweets_per_gcity, user_tweets, user_id, tweet_gcity)
         if last_flag == LAST_USER:
             tweet_gcity = comm.recv(source=comm_rank+1)
             if tweet_gcity is not None:
-                tweets_per_gcity[tweet_gcity] = tweets_per_gcity.get(
-                    tweet_gcity, 0) + 1
-                update_user_tweets(user_tweets, user_id, tweet_gcity)
-    # print('Process', comm_rank, 'finished',tweets_per_gcity)
-    # print(user_tweets)
+                update_dict(tweets_per_gcity, user_tweets,
+                            user_id, tweet_gcity)
     return tweets_per_gcity, user_tweets
 
 
@@ -173,51 +183,38 @@ def outputGcityTable(tweets_per_gcity):
 
 
 def outputMostTweetsTable(user_tweets, max_rank=10):
-    sorted_users = sorted([(user_id, sum(val for val in tweet_counts.values()))
-                           for user_id, tweet_counts in user_tweets.items()],
-                          key=lambda x: x[1], reverse=True)
+
     print('%-5s | %-20s | %-22s' %
           ("Rank", "Author Id", "Number of Tweets Made"))
-
-    for i, user_data in enumerate(sorted_users[:max_rank]):
-        print('%-5s | %-20s | %-22s' % (i+1, user_data[0], user_data[1]))
+    USER_ID_KEY, TOTAL_TWEETS_KEY = 0, 2
+    for i, user_data in enumerate(user_tweets[:max_rank]):
+        print('%-5s | %-20s | %-22s' %
+              (i+1, user_data[USER_ID_KEY], user_data[TOTAL_TWEETS_KEY]))
     return
 
 
-def outputMostUniqueTable(user_tweets, max_rank=10):
-    user_totals = {user_id: tweet_counts['total']
-                   for user_id, tweet_counts in user_tweets.items()}
-    sorted_users = sorted([(user_id, tweet_counts['unique'])
-                           for user_id, tweet_counts in user_tweets.items()],
-                          key=lambda x: (x[1], user_totals[x[0]]), reverse=True)
-    print(sorted_users[:20])
+def outputMostUniqueTable(user_tweets, most_unique_users, max_rank=10):
 
     print('%-5s | %-20s | %-44s' %
           ("Rank", "Author Id", " Number of Unique City Locations and #Tweets"))
-    for i, user_data in enumerate(sorted_users[:max_rank]):
-        user_id, total_unique = user_data
+    for i, user_data in enumerate(most_unique_users[:max_rank]):
+        user_id, total_unique, total_tweets = user_data
         user_gcity_str = ', '.join(
             gcity for gcity in user_tweets[user_id]['gcities'].keys())
         print("%-5s | %-20s " % (i + 1, user_id), end='')
         print(
-            f'| {total_unique} (#{user_totals[user_id]} tweets - {user_gcity_str})')
+            f'| {total_unique} (#{total_tweets} tweets - {user_gcity_str})')
     return
 
 
-'''
-comm = MPI.COMM_WORLD
-p = comm.Get_size()
-rank = comm.Get_rank()
-...
-MPI.Finalize()
-'''
-
-if __name__ == '__main__':
-    N = 10
-    s = time.time()
+def setup_mpi():
     comm = MPI.COMM_WORLD
     comm_rank = comm.Get_rank()
     comm_size = comm.Get_size()
+    return comm, comm_rank, comm_size
+
+
+def setup_args():
     # Instantiate the parser
     parser = argparse.ArgumentParser(description='')
     # Required sal file
@@ -225,16 +222,23 @@ if __name__ == '__main__':
     # Required geo data path
     parser.add_argument('-d', type=str, help='Require twitter data file')
     args = parser.parse_args()
-
     sal_file = args.s
     twitter_data_file = args.d
+    return sal_file, twitter_data_file
 
+
+if __name__ == '__main__':
+    N = 10
+    t1 = time.time()
+    comm, comm_rank, comm_size = setup_mpi()
+    sal_file, twitter_data_file = setup_args()
+    # setup sal dictionary
     great_locations = getGreatLocations(sal_file)
     lines_sum = comm.bcast(
         sum(1 for _ in open(twitter_data_file, encoding='utf-8')), root=0)
     e1 = time.time()
     if comm_rank == 0:
-        print('Read data: ', e1-s, 's')
+        print('Read data: ', e1-t1, 's')
     # lines_sum = 718514355
 
     lines_per_core = lines_sum // comm_size
@@ -246,7 +250,7 @@ if __name__ == '__main__':
     # print('Process', comm_rank, 'will process lines', line_to_start, line_to_end)
     tweets_per_gcity, user_tweets = analyseTweetLocation(
         twitter_data_file, great_locations, line_to_start, lines_to_end)
-    e11=time.time()
+    e11 = time.time()
     if comm_rank == 0:
         print('process', comm_rank, 'finished', e11-e1, 's')
     e2 = time.time()
@@ -257,9 +261,6 @@ if __name__ == '__main__':
     if comm_rank == 0:
         split_user_tweets_array = np.array_split(
             list(user_tweets.items()), comm_size)
-        # print('Split user tweets array')
-        # print(split_user_tweets_array)
-
     else:
         split_user_tweets_array = None
 
@@ -270,25 +271,20 @@ if __name__ == '__main__':
     if comm_rank == 0:
         print('merge time: ', e3-e2, 's')
 
-    # print('local_hash_tag')
-    # print(local_hash_tag)
+    # merge each processor's top n calculation result
 
-    # 4) merge each processor's top n calculation result
-    reduced_user_tweets_array_count = comm.reduce(heapq.nlargest(
-        N, local_tweets_array, lambda x: (x[1], x[2])), root=0, op=merge_list)
+    reduced_most_tweets_users = comm.reduce(heapq.nlargest(
+        N, local_tweets_array, lambda x: (x[2])), root=0, op=merge_most_tweets_list)
+    reduced_most_unique_users = comm.reduce(heapq.nlargest(
+        N, local_tweets_array, lambda x: (x[1], x[2])), root=0, op=merge_most_tweets_list)
 
-    print('Process', comm_rank, 'finished', reduced_user_tweets_array_count)
     e2 = time.time()
 
     if comm_rank == 0:
-        e3 = time.time()
-        # outputMostUniqueTable(user_tweets)
-        # print('Process', comm_rank, 'finished', user_tweets)
-        # print('Process', comm_rank, 'finished users:', len(user_tweets))
-        print()
-        e4 = time.time()
-        print('Reduce time: ', e3-e4, 's')
-        print('Total time: ', e3-s, 's')
+        # outputGcityTable(tweets_per_gcity)
+        outputMostTweetsTable(reduced_most_tweets_users)
+        outputMostUniqueTable(user_tweets, reduced_most_unique_users)
+        print('Total time: ', e3-t1, 's')
         pass
     MPI.Finalize()
 # mpiexec -np 4 python tweetAnalyser.py -s sal.json -d smallTwitter.json
