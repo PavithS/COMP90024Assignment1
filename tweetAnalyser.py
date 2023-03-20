@@ -197,6 +197,7 @@ def outputMostUniqueTable(user_tweets, most_unique_users, max_rank=10):
 
     print('%-5s | %-20s | %-44s' %
           ("Rank", "Author Id", " Number of Unique City Locations and #Tweets"))
+    # print(dict(user_tweets))
     for i, user_data in enumerate(most_unique_users[:max_rank]):
         user_id, total_unique, total_tweets = user_data
         user_gcity_str = ', '.join(
@@ -231,6 +232,7 @@ if __name__ == '__main__':
     N = 10
     t1 = time.time()
     comm, comm_rank, comm_size = setup_mpi()
+
     sal_file, twitter_data_file = setup_args()
     # setup sal dictionary
     great_locations = getGreatLocations(sal_file)
@@ -238,6 +240,7 @@ if __name__ == '__main__':
         sum(1 for _ in open(twitter_data_file, encoding='utf-8')), root=0)
     e1 = time.time()
     if comm_rank == 0:
+        print(f'====== {comm_size} cores are running ====== ')
         print('Read data: ', e1-t1, 's')
     # lines_sum = 718514355
 
@@ -276,13 +279,14 @@ if __name__ == '__main__':
     reduced_most_tweets_users = comm.reduce(heapq.nlargest(
         N, local_tweets_array, lambda x: (x[2])), root=0, op=merge_most_tweets_list)
     reduced_most_unique_users = comm.reduce(heapq.nlargest(
-        N, local_tweets_array, lambda x: (x[1], x[2])), root=0, op=merge_most_tweets_list)
-
+        N, local_tweets_array, lambda x: (x[1], x[2])), root=0, op=merge_most_unique_list)
+    # print('Process', comm_rank, reduced_most_unique_users)
     e2 = time.time()
 
     if comm_rank == 0:
         # outputGcityTable(tweets_per_gcity)
         outputMostTweetsTable(reduced_most_tweets_users)
+        print()
         outputMostUniqueTable(user_tweets, reduced_most_unique_users)
         print('Total time: ', e3-t1, 's')
         pass
