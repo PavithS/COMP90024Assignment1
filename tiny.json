@@ -1,0 +1,58 @@
+[
+    {
+      "_id": "1412193387575316482",
+      "_rev": "2-0fa70896c4b97c5fa391af1b9ea8e0d1",
+      "data": {
+        "author_id": "836119507173154816",
+        "conversation_id": "1412193387575316482",
+        "created_at": "2021-07-05T23:35:15.000Z",
+        "entities": {
+          "urls": [
+            {
+              "start": 83,
+              "end": 106,
+              "url": "https://t.co/q8etqvtYTz",
+              "expanded_url": "https://twitter.com/PiperJackson_xx/status/1412193387575316482/photo/1",
+              "display_url": "pic.twitter.com/q8etqvtYTz"
+            }
+          ]
+        },
+        "geo": {
+          "place_id": "3f14ce28dc7c4566"
+        },
+        "lang": "en",
+        "public_metrics": {
+          "retweet_count": 0,
+          "reply_count": 0,
+          "like_count": 0,
+          "quote_count": 0
+        },
+        "text": "🌼❤ Kindness is the ability and desire to have a positive impact upon others. xx💕xx https://t.co/q8etqvtYTz",
+        "sentiment": 0.3684210526315789
+      },
+      "includes": {
+        "places": [
+          {
+            "full_name": "Australia",
+            "geo": {
+              "type": "Feature",
+              "bbox": [
+                112.921114,
+                -43.740482,
+                159.109219,
+                -9.142176
+              ],
+              "properties": {}
+            },
+            "id": "3f14ce28dc7c4566"
+          }
+        ]
+      },
+      "matching_rules": [
+        {
+          "id": 1412189062442586000,
+          "tag": "Australia-based users or Australia-located tweets, but no re-tweets"
+        }
+      ]
+    }
+]

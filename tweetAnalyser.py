@@ -4,7 +4,7 @@ import json
 import re
 import argparse
 import heapq
-from collections import defaultdict
+from collections import defaultdict, Counter
 import numpy as np
 # Picton
 
@@ -61,17 +61,24 @@ def merge_gcities(dict1, dict2):
         result[key] = result.setdefault(key, 0) + value
     for key, value in dict2.items():
         result[key] = result.setdefault(key, 0) + value
+        # dict1, dict2
     return result
 
 
 def merge_user_tweets(dict1, dict2):
-    merged_dict = defaultdict(lambda: defaultdict(int))
-
+    merged_dict = {}
     for d in (dict1, dict2):
         for key, value in d.items():
+            if key not in merged_dict:
+                merged_dict[key] = {}
+                merged_dict[key]['gcities'] = {}
+                merged_dict[key]['total'] = 0
+                merged_dict[key]['unique'] = 0
             for inner_key, inner_value in value.items():
-                if key == 'gcities':
+                if inner_key == 'gcities':
                     for inner_inner_key, inner_inner_value in inner_value.items():
+                        if inner_inner_key not in merged_dict[key][inner_key]:
+                            merged_dict[key][inner_key][inner_inner_key] = 0
                         merged_dict[key][inner_key][inner_inner_key] += inner_inner_value
                 if inner_key == 'total':
                     merged_dict[key][inner_key] += inner_value
@@ -105,7 +112,7 @@ def merge_most_unique_list(list1, list2):
     return merged_list
 
 
-def update_user_tweets(user_tweets, user_id, tweet_gcity):
+def update_user_tweets(user_tweets, user_id, tweet_gcity, count=1):
     if user_id not in user_tweets:
         user_tweets[user_id] = {}
         user_tweets[user_id]['gcities'] = {}
@@ -113,22 +120,22 @@ def update_user_tweets(user_tweets, user_id, tweet_gcity):
         user_tweets[user_id]['unique'] = user_tweets[user_id].get(
             'unique', 0) + 1
     user_tweets[user_id]['gcities'][tweet_gcity] = user_tweets[user_id]['gcities'].get(
-        tweet_gcity, 0) + 1
+        tweet_gcity, 0) + count
     user_tweets[user_id]['total'] = user_tweets[user_id].get(
-        'total', 0) + 1
+        'total', 0) + count
     return user_tweets
 
 # @profile
 
 
-def update_dict(tweets_per_gcity, user_tweets, user_id, tweet_gcity):
+def update_dict(tweets_per_gcity, user_tweets, user_id, tweet_gcity, count=1):
     tweets_per_gcity[tweet_gcity] = tweets_per_gcity.get(
-        tweet_gcity, 0) + 1
-    update_user_tweets(user_tweets, user_id, tweet_gcity)
+        tweet_gcity, 0) + count
+    update_user_tweets(user_tweets, user_id, tweet_gcity, count)
 
 
 def analyseTweetLocation(twitter_data_file, great_locations, line_start, line_end):
-    tweets_per_gcity, user_tweets = {}, {}
+    tweets_per_gcity, user_tweets = Counter(), Counter()
     with open(twitter_data_file, 'r', encoding='utf8') as file:
         user_id, tweet_gcity = None, None
         LAST_USER, LAST_LOCATION = 0, 1
@@ -173,6 +180,42 @@ def analyseTweetLocation(twitter_data_file, great_locations, line_start, line_en
     return tweets_per_gcity, user_tweets
 
 
+def read_file(twitter_data_file):
+    time_start = time.time()
+    user_location = Counter()
+    with open(twitter_data_file, 'r', encoding='utf8') as file:
+        for line in file:
+            KEY, VALUE = 0, 1
+            if '"full_name"' not in line and '"author_id"' not in line:
+                continue
+            line = re.findall(r'"(.*?)"', line)
+
+            LOCATION_KEY, USER_ID_KEY = 'full_name', 'author_id'
+            tweet_gcity_str = None
+            if line[KEY] == LOCATION_KEY:
+                tweet_gcity_str = line[VALUE]
+                user_location.update([(user_id, tweet_gcity_str)])
+            elif line[KEY] == USER_ID_KEY:
+                user_id = line[VALUE]
+    time_end = time.time()
+    if comm_rank == 0:
+        print('read file time: ', time_end - time_start)
+    return user_location
+
+
+def analyseTweetLocation2(local_user_location, great_locations):
+    tweets_per_gcity, user_tweets = {}, {}
+    for user_id, tweet_gcity_str, count in local_user_location:
+        tweet_gcity = parse_location(tweet_gcity_str, great_locations)
+        # what if the first line is about location
+        if tweet_gcity is None:
+            continue
+
+        count = int(count)
+        update_dict(tweets_per_gcity, user_tweets, user_id, tweet_gcity, count)
+    return tweets_per_gcity, user_tweets
+
+
 def outputGcityTable(tweets_per_gcity):
     sorted_gcity = sorted(tweets_per_gcity.items(),
                           key=lambda x: x[1], reverse=True)
@@ -197,11 +240,10 @@ def outputMostUniqueTable(user_tweets, most_unique_users, max_rank=10):
 
     print('%-5s | %-20s | %-44s' %
           ("Rank", "Author Id", " Number of Unique City Locations and #Tweets"))
-    # print(dict(user_tweets))
     for i, user_data in enumerate(most_unique_users[:max_rank]):
         user_id, total_unique, total_tweets = user_data
-        user_gcity_str = ', '.join(
-            gcity for gcity in user_tweets[user_id]['gcities'].keys())
+        user_gcity_str = ', '.join([str(user_tweets[user_id]['gcities'][gcity]) + gcity[1:]
+                                   for gcity in user_tweets[user_id]['gcities'].keys()])
         print("%-5s | %-20s " % (i + 1, user_id), end='')
         print(
             f'| {total_unique} (#{total_tweets} tweets - {user_gcity_str})')
@@ -236,31 +278,49 @@ if __name__ == '__main__':
     sal_file, twitter_data_file = setup_args()
     # setup sal dictionary
     great_locations = getGreatLocations(sal_file)
-    lines_sum = comm.bcast(
-        sum(1 for _ in open(twitter_data_file, encoding='utf-8')), root=0)
-    e1 = time.time()
+    # lines_sum = comm.bcast(
+    #     sum(1 for _ in open(twitter_data_file, encoding='utf-8')), root=0)
     if comm_rank == 0:
         print(f'====== {comm_size} cores are running ====== ')
-        print('Read data: ', e1-t1, 's')
     # lines_sum = 718514355
 
-    lines_per_core = lines_sum // comm_size
-    lines_to_end = lines_sum
-    line_to_start = lines_per_core * comm_rank
-    line_to_end = line_to_start + lines_per_core
-    if comm_rank == comm_size - 1:
-        line_to_end = lines_to_end
-    # print('Process', comm_rank, 'will process lines', line_to_start, line_to_end)
-    tweets_per_gcity, user_tweets = analyseTweetLocation(
-        twitter_data_file, great_locations, line_to_start, lines_to_end)
-    e11 = time.time()
+    # lines_per_core = lines_sum // comm_size
+    # lines_to_end = lines_sum
+    # line_to_start = lines_per_core * comm_rank
+    # line_to_end = line_to_start + lines_per_core
+    # if comm_rank == comm_size - 1:
+    #     line_to_end = lines_to_end
+    # # print('Process', comm_rank, 'will process lines', line_to_start, line_to_end)
+    # tweets_per_gcity, user_tweets = analyseTweetLocation(
+    #     twitter_data_file, great_locations, line_to_start, lines_to_end)
+
+    user_location = read_file(twitter_data_file)
+    user_location = list(
+        map(lambda x: (x[0][0], x[0][1], int(x[1])), user_location.items()))
+    # 2) split merged to each processor
+
     if comm_rank == 0:
-        print('process', comm_rank, 'finished', e11-e1, 's')
+
+        split_user_location_np_array = np.array_split(
+            user_location, comm_size)
+
+    else:
+        split_user_location_np_array = None
+    # 3) scatter to each processor
+    # local_user_location = list(map(lambda x: (x[0], x[1]), comm.scatter(
+    #     split_user_location_np_array, root=0)))
+    local_user_location = comm.scatter(split_user_location_np_array, root=0)
+    # print('process', comm_rank, 'finished', len(local_user_location))
+    tweets_per_gcity, user_tweets = analyseTweetLocation2(
+        local_user_location, great_locations)
+    # print('process', comm_rank, 'finished', tweets_per_gcity)
+
+    e11 = time.time()
     e2 = time.time()
+    # merge each processor's result
+    tweets_per_gcity = comm.reduce(tweets_per_gcity, root=0, op=merge_gcities)
 
-    comm.reduce(tweets_per_gcity, root=0, op=merge_gcities)
-
-    comm.reduce(user_tweets, root=0, op=merge_user_tweets)
+    user_tweets = comm.reduce(user_tweets, root=0, op=merge_user_tweets)
     if comm_rank == 0:
         split_user_tweets_array = np.array_split(
             list(user_tweets.items()), comm_size)
@@ -278,18 +338,19 @@ if __name__ == '__main__':
 
     reduced_most_tweets_users = comm.reduce(heapq.nlargest(
         N, local_tweets_array, lambda x: (x[2])), root=0, op=merge_most_tweets_list)
+
     reduced_most_unique_users = comm.reduce(heapq.nlargest(
         N, local_tweets_array, lambda x: (x[1], x[2])), root=0, op=merge_most_unique_list)
     # print('Process', comm_rank, reduced_most_unique_users)
-    e2 = time.time()
 
     if comm_rank == 0:
-        # outputGcityTable(tweets_per_gcity)
+        e2 = time.time()
+        
+        outputGcityTable(tweets_per_gcity)
         outputMostTweetsTable(reduced_most_tweets_users)
         print()
         outputMostUniqueTable(user_tweets, reduced_most_unique_users)
-        print('Total time: ', e3-t1, 's')
-        pass
+        print('Total time: ', e2-t1, 's')
     MPI.Finalize()
 # mpiexec -np 4 python tweetAnalyser.py -s sal.json -d smallTwitter.json
 # mpiexec -np 4 python tweetAnalyser.py -s sal.json -d twitter-data-small.json
