@@ -139,8 +139,8 @@ def outputGcityTable(tweets_per_gcity):
     sorted_gcity = sorted(tweets_per_gcity.items(),
                           key=lambda x: x[1], reverse=True)
     print('%-20s | %-22s' % ("Greater Capital City", "Number of Tweets Made"))
-    for gcity_data in sorted_gcity:
-        print("%-20s | %-22s" % (gcity_data[0], gcity_data[1]))
+        for gcity, tweet_count in sorted_gcity:
+        print("%-20s | %-22s" % (gcity, tweet_count))
     return
 
 
@@ -169,7 +169,7 @@ def outputMostUniqueTable(user_tweets, max_rank=10):
     for i, user_data in enumerate(sorted_users[:max_rank]):
         user_id, total_unique = user_data
         user_gcity_str = ', '.join(
-            gcity for gcity in user_tweets[user_id].keys())
+            str(user_tweets[user_id][gcity])+gcity[1:] for gcity in user_tweets[user_id].keys())
         print("%-5s | %-20s " % (i + 1, user_id), end='')
         print(
             f'| {total_unique} (#{user_totals[user_id]} tweets - {user_gcity_str})')
