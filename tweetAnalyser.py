@@ -139,7 +139,7 @@ def outputGcityTable(tweets_per_gcity):
     sorted_gcity = sorted(tweets_per_gcity.items(),
                           key=lambda x: x[1], reverse=True)
     print('%-20s | %-22s' % ("Greater Capital City", "Number of Tweets Made"))
-        for gcity, tweet_count in sorted_gcity:
+    for gcity, tweet_count in sorted_gcity:
         print("%-20s | %-22s" % (gcity, tweet_count))
     return
 
