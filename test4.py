@@ -10,7 +10,7 @@ filename = 'D://bigTwitter.json'
 
 filesize = os.path.getsize(filename)
 
-chunk_size = 1024*1024   # 每次读取1MB
+chunk_size = 1024*1024  
 num_chunks = (filesize + chunk_size - 1) // chunk_size
 chunk_offset = rank * num_chunks // size
 chunk_count = (num_chunks + size - 1) // size

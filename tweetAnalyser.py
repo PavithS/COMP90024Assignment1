@@ -1,219 +1,25 @@
+# coding=utf-8
+
 from mpi4py import MPI
 import time
-import json
-import re
-import argparse
-import heapq
+
 from collections import defaultdict, Counter
 import numpy as np
-# Picton
+from mpi4py import MPI
+import os
+import io
+import time
+import sys
+import re
+import json
+import heapq
+import argparse
 
+# NOTE TO SELF: The code works only in Linux not Windows
+# mpiexec -np 8 python tweetAnalyser.py -s sal.json -d smallTwitter.json
 
-def getGreatLocations(sal_file):
-
-    great_locations = {'gcc_list': []}
-    with open(sal_file, encoding='utf8') as location_file:
-        location_data = json.load(location_file)
-        for place_name, place_data in location_data.items():
-            if place_data['gcc'][1] == 'g' or place_data['gcc'] == '8acte':
-                great_locations[place_name] = place_data
-                if place_data['gcc'] not in great_locations['gcc_list']:
-                    great_locations['gcc_list'].append(place_data['gcc'])
-
-    return great_locations
-
-
-def parse_location(tweet_location_str: str, great_locations):
-    state_dict = {
-        'New South Wales': 'nsw',
-        'Queensland': 'qld',
-        'South Australia': 'sa',
-        'Tasmania': 'tas.',
-        'Victoria': 'vic.',
-        'Western Australia': 'wa',
-        'Northern Territory': 'nt',
-        'Australian Capital Territory': 'act',
-    }
-    tweet_gcity = None
-
-    if (',' not in tweet_location_str):
-        return None
-
-    state_or_au = tweet_location_str.split(',')[1].strip()
-    # location should lower case
-    suburb = tweet_location_str.split(',')[0].strip().lower()
-    state = state_or_au
-    if state_or_au in state_dict:
-        suburb_with_state = f'{suburb} ({state_dict[state]})'
-        if suburb_with_state in great_locations:
-            tweet_gcity = great_locations[suburb_with_state]['gcc']
-            return tweet_gcity
-    if suburb in great_locations:
-        tweet_gcity = great_locations[suburb]['gcc']
-        return tweet_gcity
-
-    return tweet_gcity
-
-
-def merge_gcities(dict1, dict2):
-    result = {}
-    for key, value in dict1.items():
-        result[key] = result.setdefault(key, 0) + value
-    for key, value in dict2.items():
-        result[key] = result.setdefault(key, 0) + value
-        # dict1, dict2
-    return result
-
-
-def merge_user_tweets(dict1, dict2):
-    merged_dict = {}
-    for d in (dict1, dict2):
-        for key, value in d.items():
-            if key not in merged_dict:
-                merged_dict[key] = {}
-                merged_dict[key]['gcities'] = {}
-                merged_dict[key]['total'] = 0
-                merged_dict[key]['unique'] = 0
-            for inner_key, inner_value in value.items():
-                if inner_key == 'gcities':
-                    for inner_inner_key, inner_inner_value in inner_value.items():
-                        if inner_inner_key not in merged_dict[key][inner_key]:
-                            merged_dict[key][inner_key][inner_inner_key] = 0
-                        merged_dict[key][inner_key][inner_inner_key] += inner_inner_value
-                if inner_key == 'total':
-                    merged_dict[key][inner_key] += inner_value
-    for key, value in merged_dict.items():
-        for inner_key, inner_value in value.items():
-            if inner_key == 'gcities':
-                merged_dict[key]['unique'] = len(inner_value.keys())
-    return dict(merged_dict)
-
-
-def merge_list(list1, list2):
-    merged_list = []
-    merged_list.extend(list1)
-    merged_list.extend(list2)
-    return merged_list
-
-
-def merge_most_tweets_list(list1, list2):
-    TOTAL_INDEX = 2
-    merged_list = merge_list(list1, list2)
-    merged_list = heapq.nlargest(
-        N, merged_list, key=lambda x: (x[TOTAL_INDEX]))
-    return merged_list
-
-
-def merge_most_unique_list(list1, list2):
-    UNIQUE_INDEX = 1
-    merged_list = merge_list(list1, list2)
-    merged_list = heapq.nlargest(
-        N, merged_list, key=lambda x: (x[UNIQUE_INDEX], x[2]))
-    return merged_list
-
-
-def update_user_tweets(user_tweets, user_id, tweet_gcity, count=1):
-    if user_id not in user_tweets:
-        user_tweets[user_id] = {}
-        user_tweets[user_id]['gcities'] = {}
-    if tweet_gcity not in user_tweets[user_id]['gcities']:
-        user_tweets[user_id]['unique'] = user_tweets[user_id].get(
-            'unique', 0) + 1
-    user_tweets[user_id]['gcities'][tweet_gcity] = user_tweets[user_id]['gcities'].get(
-        tweet_gcity, 0) + count
-    user_tweets[user_id]['total'] = user_tweets[user_id].get(
-        'total', 0) + count
-    return user_tweets
-
-# @profile
-
-
-def update_dict(tweets_per_gcity, user_tweets, user_id, tweet_gcity, count=1):
-    tweets_per_gcity[tweet_gcity] = tweets_per_gcity.get(
-        tweet_gcity, 0) + count
-    update_user_tweets(user_tweets, user_id, tweet_gcity, count)
-
-
-def analyseTweetLocation(twitter_data_file, great_locations, line_start, line_end):
-    tweets_per_gcity, user_tweets = Counter(), Counter()
-    with open(twitter_data_file, 'r', encoding='utf8') as file:
-        user_id, tweet_gcity = None, None
-        LAST_USER, LAST_LOCATION = 0, 1
-        last_flag = LAST_LOCATION
-        for line_num, line in enumerate(file):
-            if line_start > line_num:
-                continue
-            if line_num == line_end:
-                break
-            KEY, VALUE = 0, 1
-            if '"full_name"' not in line and '"author_id"' not in line:
-                continue
-            line = re.findall(r'"(.*?)"', line)
-            if len(line) < 2:
-                continue
-            LOCATION_KEY, USER_ID_KEY = 'full_name', 'author_id'
-            tweet_gcity_str = None
-            if line[KEY] == LOCATION_KEY:
-                tweet_gcity_str = line[VALUE]
-                last_flag = LAST_LOCATION
-
-            elif line[KEY] == USER_ID_KEY:
-                user_id = line[VALUE]
-                last_flag = LAST_USER
-                continue
-            else:
-                continue
-            tweet_gcity = parse_location(tweet_gcity_str, great_locations)
-            # what if the first line is about location
-            if user_id is None:
-                comm.send(tweet_gcity, dest=comm_rank-1)
-                continue
-            if tweet_gcity is None:
-                user_id = None
-                continue
-            update_dict(tweets_per_gcity, user_tweets, user_id, tweet_gcity)
-        if last_flag == LAST_USER:
-            tweet_gcity = comm.recv(source=comm_rank+1)
-            if tweet_gcity is not None:
-                update_dict(tweets_per_gcity, user_tweets,
-                            user_id, tweet_gcity)
-    return tweets_per_gcity, user_tweets
-
-
-def read_file(twitter_data_file):
-    time_start = time.time()
-    user_location = Counter()
-    with open(twitter_data_file, 'r', encoding='utf8') as file:
-        for line in file:
-            KEY, VALUE = 0, 1
-            if '"full_name"' not in line and '"author_id"' not in line:
-                continue
-            line = re.findall(r'"(.*?)"', line)
-
-            LOCATION_KEY, USER_ID_KEY = 'full_name', 'author_id'
-            tweet_gcity_str = None
-            if line[KEY] == LOCATION_KEY:
-                tweet_gcity_str = line[VALUE]
-                user_location.update([(user_id, tweet_gcity_str)])
-            elif line[KEY] == USER_ID_KEY:
-                user_id = line[VALUE]
-    time_end = time.time()
-    if comm_rank == 0:
-        print('read file time: ', time_end - time_start)
-    return user_location
-
-
-def analyseTweetLocation2(local_user_location, great_locations):
-    tweets_per_gcity, user_tweets = {}, {}
-    for user_id, tweet_gcity_str, count in local_user_location:
-        tweet_gcity = parse_location(tweet_gcity_str, great_locations)
-        # what if the first line is about location
-        if tweet_gcity is None:
-            continue
-
-        count = int(count)
-        update_dict(tweets_per_gcity, user_tweets, user_id, tweet_gcity, count)
-    return tweets_per_gcity, user_tweets
+sys.stdout = io.TextIOWrapper(
+    sys.stdout.buffer, encoding='utf8')
 
 
 def outputGcityTable(tweets_per_gcity):
@@ -250,11 +56,147 @@ def outputMostUniqueTable(user_tweets, most_unique_users, max_rank=10):
     return
 
 
-def setup_mpi():
-    comm = MPI.COMM_WORLD
-    comm_rank = comm.Get_rank()
-    comm_size = comm.Get_size()
-    return comm, comm_rank, comm_size
+def getGreatLocations(sal_file):
+
+    great_locations = {'gcc_list': []}
+    with open(sal_file, encoding='utf8') as location_file:
+        location_data = json.load(location_file)
+        for place_name, place_data in location_data.items():
+            if place_data['gcc'][1] == 'g' or place_data['gcc'] == '8acte':
+                great_locations[place_name] = place_data
+                if place_data['gcc'] not in great_locations['gcc_list']:
+                    great_locations['gcc_list'].append(place_data['gcc'])
+
+    return great_locations
+
+
+def handle_buffer(buff, last_line):
+    str_data = buff
+    lines = str_data.split("\n")
+    lines = list(map(lambda x: x.strip(), lines))
+    if last_line:
+        lines[0] = last_line + lines[0]
+    if '\n' not in lines[-1]:
+        last_line = lines[-1]
+        lines = lines[:-1]
+    else:
+        last_line = None
+    return lines, last_line
+
+
+def read_big_file(filename, start, end, user_location):
+    with open(filename, "r", encoding='utf-8', errors="ignore") as f:
+
+        f.seek(start)
+        buff_size = 1024*1024
+
+        first_buff = ""
+        if comm.Get_rank() != 0:
+            while True:
+                tmp = f.read(1)
+                first_buff += tmp
+                if tmp == '\n':
+                    break
+            # print("rank:", rank, "first_buff:", first_buff)
+            # comm.send(first_buff.strip(), dest=rank-1)
+        last_line = None
+        user_id, tweet_gcity_str = None, None
+        while f.tell() < end:
+            str_buff = f.read(min(buff_size, end - f.tell()))
+            # print("rank:", rank, "f.tell():", end - f.tell())
+            lines, last_line = handle_buffer(str_buff, last_line)
+
+            for line in lines:
+                if '"full_name"' not in line and '"author_id"' not in line:
+                    continue
+                line = re.findall(r'"(.*?)"', line)
+                LOCATION_KEY, USER_ID_KEY = 'full_name', 'author_id'
+                KEY, VALUE = 0, 1
+                if line[KEY] == LOCATION_KEY and user_id is not None:
+                    tweet_gcity_str = line[VALUE]
+                    user_location.update([(user_id, tweet_gcity_str)])
+                elif line[KEY] == USER_ID_KEY:
+                    user_id = line[VALUE]
+        # print("rank:", rank, "last line:", last_line)
+            if rank != size-1:
+                pass
+                # t = comm.recv(source=rank+1)
+                # todo incomplete data
+                # last_line_2 = last_line + t
+                # print("rank:", rank, ":",
+                #     last_line_2)
+        # print(user_location)
+        return user_location
+
+
+def parse_location(tweet_location_str: str, great_locations):
+    state_dict = {
+        'New South Wales': 'nsw',
+        'Queensland': 'qld',
+        'South Australia': 'sa',
+        'Tasmania': 'tas.',
+        'Victoria': 'vic.',
+        'Western Australia': 'wa',
+        'Northern Territory': 'nt',
+        'Australian Capital Territory': 'act',
+    }
+    tweet_gcity = None
+
+    if (',' not in tweet_location_str):
+        return None
+
+    state_or_au = tweet_location_str.split(',')[1].strip()
+    # location should lower case
+    suburb = tweet_location_str.split(',')[0].strip().lower()
+    state = state_or_au
+    if state_or_au in state_dict:
+        suburb_with_state = f'{suburb} ({state_dict[state]})'
+        if suburb_with_state in great_locations:
+            tweet_gcity = great_locations[suburb_with_state]['gcc']
+            return tweet_gcity
+    if suburb in great_locations:
+        tweet_gcity = great_locations[suburb]['gcc']
+        return tweet_gcity
+
+    return tweet_gcity
+
+
+def mege_counter(l1, l2):
+    l = Counter(l1)+Counter(l2)
+    print('len,,', len(l))
+    return l
+
+
+def update_dict(tweets_per_gcity, user_tweets, user_id, tweet_gcity, count=1):
+    tweets_per_gcity[tweet_gcity] = tweets_per_gcity.get(
+        tweet_gcity, 0) + count
+    update_user_tweets(user_tweets, user_id, tweet_gcity, count)
+
+
+def update_user_tweets(user_tweets, user_id, tweet_gcity, count=1):
+    if user_id not in user_tweets:
+        user_tweets[user_id] = {}
+        user_tweets[user_id]['gcities'] = {}
+    if tweet_gcity not in user_tweets[user_id]['gcities']:
+        user_tweets[user_id]['unique'] = user_tweets[user_id].get(
+            'unique', 0) + 1
+    user_tweets[user_id]['gcities'][tweet_gcity] = user_tweets[user_id]['gcities'].get(
+        tweet_gcity, 0) + count
+    user_tweets[user_id]['total'] = user_tweets[user_id].get(
+        'total', 0) + count
+    return user_tweets
+
+
+def analyseTweetLocation(local_user_location, great_locations):
+    tweets_per_gcity, user_tweets = {}, {}
+    for user_id, tweet_gcity_str, count in local_user_location:
+        tweet_gcity = parse_location(tweet_gcity_str, great_locations)
+        # what if the first line is about location
+        if tweet_gcity is None:
+            continue
+        count = int(count)
+        update_dict(tweets_per_gcity, user_tweets, user_id, tweet_gcity, count)
+    return tweets_per_gcity, user_tweets
 
 
 def setup_args():
@@ -270,90 +212,56 @@ def setup_args():
     return sal_file, twitter_data_file
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     N = 10
+
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+
+    comm.Barrier()
     t1 = time.time()
-    comm, comm_rank, comm_size = setup_mpi()
 
     sal_file, twitter_data_file = setup_args()
-    # setup sal dictionary
+
     great_locations = getGreatLocations(sal_file)
-    # lines_sum = comm.bcast(
-    #     sum(1 for _ in open(twitter_data_file, encoding='utf-8')), root=0)
-    if comm_rank == 0:
-        print(f'====== {comm_size} cores are running ====== ')
-    # lines_sum = 718514355
 
-    # lines_per_core = lines_sum // comm_size
-    # lines_to_end = lines_sum
-    # line_to_start = lines_per_core * comm_rank
-    # line_to_end = line_to_start + lines_per_core
-    # if comm_rank == comm_size - 1:
-    #     line_to_end = lines_to_end
-    # # print('Process', comm_rank, 'will process lines', line_to_start, line_to_end)
-    # tweets_per_gcity, user_tweets = analyseTweetLocation(
-    #     twitter_data_file, great_locations, line_to_start, lines_to_end)
+    # filename = "D://bigTwitter.json"
+    filename = twitter_data_file
+    # filename = "./tiny.json"
 
-    user_location = read_file(twitter_data_file)
-    user_location = list(
-        map(lambda x: (x[0][0], x[0][1], int(x[1])), user_location.items()))
-    # 2) split merged to each processor
+    filesize = os.path.getsize(filename)
 
-    if comm_rank == 0:
+    # get chunck size
+    blocksize = filesize // size
+    start = rank * blocksize
+    end = start + blocksize
+    if rank == size - 1:
+        end = filesize
+    user_location = Counter()
+    user_location = read_big_file(filename, start, end, user_location)
+    comm.Barrier()
+    all_user_location = comm.gather(user_location, root=0)
 
-        split_user_location_np_array = np.array_split(
-            user_location, comm_size)
+    if rank == 0:
+        user_location = Counter()
+        for i in all_user_location:
+            user_location.update(i)
+        user_location = list(
+            map(lambda x: (x[0][0], x[0][1], int(x[1])), user_location.items()))
+        tweets_per_gcity, user_tweets = analyseTweetLocation(
+            user_location, great_locations)
+        local_tweets_array = list(map(lambda x: (
+            x[0], int(x[1]['unique']), int(x[1]['total'])), list(user_tweets.items())))
+        reduced_most_unique_users = heapq.nlargest(
+            N, local_tweets_array, lambda x: (x[1], x[2]))
+        reduced_most_tweets_users = heapq.nlargest(
+            N, local_tweets_array, lambda x: (x[2]))
 
-    else:
-        split_user_location_np_array = None
-    # 3) scatter to each processor
-    # local_user_location = list(map(lambda x: (x[0], x[1]), comm.scatter(
-    #     split_user_location_np_array, root=0)))
-    local_user_location = comm.scatter(split_user_location_np_array, root=0)
-    # print('process', comm_rank, 'finished', len(local_user_location))
-    tweets_per_gcity, user_tweets = analyseTweetLocation2(
-        local_user_location, great_locations)
-    # print('process', comm_rank, 'finished', tweets_per_gcity)
-
-    e11 = time.time()
-    e2 = time.time()
-    # merge each processor's result
-    tweets_per_gcity = comm.reduce(tweets_per_gcity, root=0, op=merge_gcities)
-
-    user_tweets = comm.reduce(user_tweets, root=0, op=merge_user_tweets)
-    if comm_rank == 0:
-        split_user_tweets_array = np.array_split(
-            list(user_tweets.items()), comm_size)
-    else:
-        split_user_tweets_array = None
-
-    # 3) scatter merged to each processor
-    local_tweets_array = list(map(lambda x: (x[0], int(x[1]['unique']), int(x[1]['total'])), comm.scatter(
-        split_user_tweets_array, root=0)))
-    e3 = time.time()
-    if comm_rank == 0:
-        print('merge time: ', e3-e2, 's')
-
-    # merge each processor's top n calculation result
-
-    reduced_most_tweets_users = comm.reduce(heapq.nlargest(
-        N, local_tweets_array, lambda x: (x[2])), root=0, op=merge_most_tweets_list)
-
-    reduced_most_unique_users = comm.reduce(heapq.nlargest(
-        N, local_tweets_array, lambda x: (x[1], x[2])), root=0, op=merge_most_unique_list)
-    # print('Process', comm_rank, reduced_most_unique_users)
-
-    if comm_rank == 0:
-        e2 = time.time()
-        
         outputGcityTable(tweets_per_gcity)
         outputMostTweetsTable(reduced_most_tweets_users)
         print()
         outputMostUniqueTable(user_tweets, reduced_most_unique_users)
-        print('Total time: ', e2-t1, 's')
+        t2 = time.time()
+        print("time:", t2-t1,'s')
     MPI.Finalize()
-# mpiexec -np 4 python tweetAnalyser.py -s sal.json -d smallTwitter.json
-# mpiexec -np 4 python tweetAnalyser.py -s sal.json -d twitter-data-small.json
-# mpiexec -np 4 python tweetAnalyser.py -s sal.json -d D://bigTwitter.json
-
-# 4 cores
