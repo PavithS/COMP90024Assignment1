@@ -142,19 +142,17 @@ def parse_location(tweet_location_str: str, great_locations):
         'Australian Capital Territory': 'act',
     }
     tweet_gcity = None
+    suburb = tweet_location_str.split(',')[0].strip().lower()  # location should lower case
 
-    if (',' not in tweet_location_str):
-        return None
+    if (',' in tweet_location_str):
+        state_or_au = tweet_location_str.split(',')[1].strip()
+        state = state_or_au
+        if state_or_au in state_dict:
+            suburb_with_state = f'{suburb} ({state_dict[state]})'
+            if suburb_with_state in great_locations:
+                tweet_gcity = great_locations[suburb_with_state]['gcc']
+                return tweet_gcity
 
-    state_or_au = tweet_location_str.split(',')[1].strip()
-    # location should lower case
-    suburb = tweet_location_str.split(',')[0].strip().lower()
-    state = state_or_au
-    if state_or_au in state_dict:
-        suburb_with_state = f'{suburb} ({state_dict[state]})'
-        if suburb_with_state in great_locations:
-            tweet_gcity = great_locations[suburb_with_state]['gcc']
-            return tweet_gcity
     if suburb in great_locations:
         tweet_gcity = great_locations[suburb]['gcc']
         return tweet_gcity
