@@ -101,6 +101,8 @@ def read_big_file(filename, start, end, user_location):
             # comm.send(first_buff.strip(), dest=rank-1)
         last_line = None
         user_id, tweet_gcity_str = None, None
+        LOCATION_KEY, USER_ID_KEY = 'full_name', 'author_id'
+        KEY, VALUE = 0, 1
         while f.tell() < end:
             str_buff = f.read(min(buff_size, end - f.tell()))
             # print("rank:", rank, "f.tell():", end - f.tell())
@@ -110,13 +112,12 @@ def read_big_file(filename, start, end, user_location):
                 if '"full_name"' not in line and '"author_id"' not in line:
                     continue
                 line = re.findall(r'"(.*?)"', line)
-                LOCATION_KEY, USER_ID_KEY = 'full_name', 'author_id'
-                KEY, VALUE = 0, 1
                 if line[KEY] == LOCATION_KEY and user_id is not None:
                     tweet_gcity_str = line[VALUE]
                     user_location.update([(user_id, tweet_gcity_str)])
                 elif line[KEY] == USER_ID_KEY:
                     user_id = line[VALUE]
+                    user_location.update([(user_id, 'total')])
         # print("rank:", rank, "last line:", last_line)
             if rank != size-1:
                 pass
@@ -240,6 +241,10 @@ if __name__ == "__main__":
         end = filesize
     user_location = Counter()
     user_location = read_big_file(filename, start, end, user_location)
+
+    t_end_core = time.time()
+    print(f'Core {rank} reading completed: {t_end_core - t1}s')  # Monitor variation in execution time of cores
+
     comm.Barrier()
     all_user_location = comm.gather(user_location, root=0)
 
@@ -249,6 +254,8 @@ if __name__ == "__main__":
             user_location.update(i)
         user_location = list(
             map(lambda x: (x[0][0], x[0][1], int(x[1])), user_location.items()))
+        user_totals = list(
+            filter(lambda x: x[1] == 'total', user_location))
         tweets_per_gcity, user_tweets = analyseTweetLocation(
             user_location, great_locations)
         local_tweets_array = list(map(lambda x: (
@@ -256,12 +263,14 @@ if __name__ == "__main__":
         reduced_most_unique_users = heapq.nlargest(
             N, local_tweets_array, lambda x: (x[1], x[2]))
         reduced_most_tweets_users = heapq.nlargest(
-            N, local_tweets_array, lambda x: (x[2]))
-
-        outputGcityTable(tweets_per_gcity)
+            N, user_totals, lambda x: (x[2]))
+        print('\nTask 1:\n')
         outputMostTweetsTable(reduced_most_tweets_users)
-        print()
+        print('\nTask 2:\n')
+        outputGcityTable(tweets_per_gcity)
+        print('\nTask 3:\n')
         outputMostUniqueTable(user_tweets, reduced_most_unique_users)
+        print()
         t2 = time.time()
-        print("time:", t2-t1,'s')
+        print(f'Total time: {t2-t1}s\n')
     MPI.Finalize()
